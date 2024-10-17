@@ -1,0 +1,10 @@
+{
+  "tasks": {
+    "dev": "deno run --watch --allow-read --allow-write --allow-net --allow-env index.ts"
+  },
+  "imports": {
+    "@mxkit/inquire": "jsr:@mxkit/inquire@^0.1.0",
+    "@nothing628/chalk": "jsr:@nothing628/chalk@^1.0.1",
+    "@std/fs": "jsr:@std/fs@^1.0.4"
+  }
+}

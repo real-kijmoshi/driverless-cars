@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Racing Game with Genetic Algorithm</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.1/chart.min.js"></script>
+    <style>
+        * {
+            zoom: 1;
+        }
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+            background: #04b4e5;
+            background: linear-gradient(180deg, #04b4e5 0%, #0f8b8d 100%);
+        }
+        .infobox {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.5);
+            color: #fff;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        #chart {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            width: 200px;
+            height: 100px;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div class="infobox"></div>
+    <canvas id="chart"></canvas>
+
+    <script>
+    class Brain {
+        constructor() {
+            this.inputLayer = new Array(8).fill(0).map(() => Math.random() * 2 - 1);
+            this.hiddenLayer = new Array(8).fill(0).map(() => Math.random() * 2 - 1);
+            this.hiddenLayer2 = new Array(8).fill(0).map(() => Math.random() * 2 - 1);
+            this.outputLayer = new Array(4).fill(0).map(() => Math.random() * 2 - 1);
+        }
+
+        predict(input) {
+            const hiddenLayer = this.inputLayer.map((neuron, i) => neuron * input[i]);
+            const hiddenLayer2 = this.hiddenLayer.map((neuron, i) => neuron * hiddenLayer[i]);
+            const outputLayer = this.hiddenLayer2.map((neuron, i) => neuron * hiddenLayer2[i]);
+
+            return outputLayer.map(Math.tanh);
+        }
+
+        mutate(rate) {
+            const mutateLayer = (layer) => layer.map(neuron => 
+                Math.random() < rate ? neuron + Math.random() * 0.2 - 0.1 : neuron
+            );
+
+            this.inputLayer = mutateLayer(this.inputLayer);
+            this.hiddenLayer = mutateLayer(this.hiddenLayer);
+            this.hiddenLayer2 = mutateLayer(this.hiddenLayer2);
+            this.outputLayer = mutateLayer(this.outputLayer);
+        }
+
+        clone() {
+            const clone = new Brain();
+            clone.inputLayer = this.inputLayer.slice();
+            clone.hiddenLayer = this.hiddenLayer.slice();
+            clone.hiddenLayer2 = this.hiddenLayer2.slice();
+            clone.outputLayer = this.outputLayer.slice();
+            return clone;
+        }
+    }
+
+    const track = [
+        { x: 200, y: 200, curve: -1.0 },
+        { x: 300, y: 200, curve: -0.1 },
+        { x: 500, y: 230, curve: 0 },
+        { x: 550, y: 240, curve: -0.5 },
+        { x: 600, y: 200, curve: -0.9 },
+        { x: 1000, y: 200, curve: -0.9 },
+        { x: 1400, y: 500, curve: -0.1 },
+        { x: 1300, y: 700, curve: -0.5 },
+        { x: 1000, y: 800, curve: -0.5 },
+        { x: 600, y: 800, curve: -0.5 },
+        { x: 200, y: 800, curve: -0.15 },
+        { x: 100, y: 600, curve: -0.5 },
+        { x: 100, y: 400, curve: -0.5 },
+    ];
+
+    const trackWidth = 90;
+    const populationSize = 10;
+    const survivalRate = 0.01;
+    const mutationRate = 0.1;
+    const generationTimeLimit = 40 * 1000; // 40 seconds
+
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    class Car {
+        constructor(brain = new Brain()) {
+            this.x = track[0].x;
+            this.y = track[0].y;
+            this.angle = 0;
+            this.speed = 0.5;
+            this.minSpeed = 0;
+            this.maxSpeed = 3;
+            this.width = 40;
+            this.height = 20;
+            this.sensors = [
+                { angle: -Math.PI / 3, distance: 0 },
+                { angle: -Math.PI / 6, distance: 0 },
+                { angle: 0, distance: 0 },
+                { angle: Math.PI / 6, distance: 0 },
+                { angle: Math.PI / 3, distance: 0 }
+            ];
+            this.brain = brain;
+            this.crashed = false;
+            this.fitness = 0;
+            this.checkpoints = 0;
+        }
+
+        update() {
+            if (this.crashed) return;
+
+            const inputs = [
+                ...this.sensors.map(s => s.distance / 150),
+                Math.sin(this.angle),
+                Math.cos(this.angle),
+                this.speed / this.maxSpeed
+            ];
+
+            const [turnLeft, turnRight, speedUp, slowDown] = this.brain.predict(inputs);
+
+            this.angle += (turnRight - turnLeft) * 0.1;
+            this.speed += (speedUp - slowDown) * 0.1;
+            this.speed = Math.max(this.minSpeed, Math.min(this.speed, this.maxSpeed));
+
+            this.x += Math.cos(this.angle) * this.speed;
+            this.y += Math.sin(this.angle) * this.speed;
+
+            this.updateSensors();
+
+            if (this.checkCollision()) {
+                this.crashed = true;
+                this.fitness *= 0.8;
+            } else {
+                this.checkCheckpoint();
+                this.fitness += this.speed * 2;
+                if (this.speed < 0.5) this.fitness *= 0.5;
+                this.fitness += this.sensors.reduce((sum, sensor) => sum + sensor.distance, 0) / this.sensors.length;
+            }
+        }
+
+        checkCheckpoint() {
+            const nextCheckpoint = track[(this.checkpoints + 1) % track.length];
+            const distance = Math.sqrt((this.x - nextCheckpoint.x) ** 2 + (this.y - nextCheckpoint.y) ** 2);
+            if (distance < 50) {
+                this.checkpoints++;
+                this.fitness += 2000;
+            }
+        }
+
+        updateSensors() {
+            this.sensors.forEach(sensor => {
+                const sensorAngle = this.angle + sensor.angle;
+                let x = this.x;
+                let y = this.y;
+                let distance = 0;
+
+                while (distance < 150 && isPointInsideTrack(x, y)) {
+                    x += Math.cos(sensorAngle);
+                    y += Math.sin(sensorAngle);
+                    distance++;
+                }
+
+                sensor.distance = distance;
+            });
+        }
+
+        checkCollision() {
+            const corners = [
+                { x: -this.width / 2, y: -this.height / 2 },
+                { x: this.width / 2, y: -this.height / 2 },
+                { x: -this.width / 2, y: this.height / 2 },
+                { x: this.width / 2, y: this.height / 2 }
+            ];
+
+            for (const corner of corners) {
+                const rotatedX = corner.x * Math.cos(this.angle) - corner.y * Math.sin(this.angle);
+                const rotatedY = corner.x * Math.sin(this.angle) + corner.y * Math.cos(this.angle);
+                const worldX = this.x + rotatedX;
+                const worldY = this.y + rotatedY;
+
+                if (!isPointInsideTrack(worldX, worldY)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        draw() {
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.rotate(this.angle);
+            ctx.fillStyle = this.crashed ? 'gray' : 'red';
+            ctx.fillRect(-this.width / 2, -this.height / 2, this.width, this.height);
+            ctx.restore();
+
+            // Draw sensors
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.rotate(this.angle);
+            ctx.strokeStyle = 'yellow';
+            ctx.lineWidth = 2;
+
+            this.sensors.forEach(sensor => {
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                const endX = Math.cos(sensor.angle) * sensor.distance;
+                const endY = Math.sin(sensor.angle) * sensor.distance;
+                ctx.lineTo(endX, endY);
+                ctx.stroke();
+            });
+
+            ctx.fillStyle = 'black';
+            ctx.fillRect(-this.width / 2, -this.height / 2, 40, 20);
+            ctx.fillStyle = 'white';
+            ctx.font = '10px Arial';
+            ctx.fillText(this.fitness.toFixed(2), -this.width / 2 + 5, -this.height / 2 + 15);
+            ctx.restore();
+        }
+    }
+
+    let cars = Array(populationSize).fill().map(() => new Car());
+    let generation = 1;
+    let bestFitness = 0;
+    let bestCheckpoints = 0;
+    let generationStartTime;
+    const fitnessHistory = [];
+
+    function drawTrack() {
+        ctx.beginPath();
+        ctx.moveTo(track[0].x, track[0].y);
+        for (let i = 1; i < track.length; i++) {
+            const prev = track[i - 1];
+            const current = track[i];
+            const next = track[(i + 1) % track.length];
+
+            const cx1 = prev.x + (current.x - prev.x) * (1 - current.curve);
+            const cy1 = prev.y + (current.y - prev.y) * (1 - current.curve);
+            const cx2 = current.x - (next.x - current.x) * current.curve;
+            const cy2 = current.y - (next.y - current.y) * current.curve;
+
+            ctx.bezierCurveTo(cx1, cy1, cx2, cy2, next.x, next.y);
+        }
+        ctx.closePath();
+        ctx.lineWidth = trackWidth;
+        ctx.strokeStyle = '#333';
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(track[0].x, track[0].y);
+        for (let i = 1; i < track.length; i++) {
+            const prev = track[i - 1];
+            const current = track[i];
+            const next = track[(i + 1) % track.length];
+
+            const cx1 = prev.x + (current.x - prev.x) * (1 - current.curve);
+            const cy1 = prev.y + (current.y - prev.y) * (1 - current.curve);
+            const cx2 = current.x - (next.x - current.x) * current.curve;
+            const cy2 = current.y - (next.y - current.y) * current.curve;
+
+            ctx.bezierCurveTo(cx1, cy1, cx2, cy2, next.x, next.y);
+        }
+        ctx.closePath();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#fff';
+        ctx.stroke();
+    }
+
+    const infoBox = document.querySelector('.infobox');
+
+    function isPointInsideTrack(x, y) {
+        ctx.save();
+        ctx.lineWidth = trackWidth;
+        ctx.beginPath();
+        ctx.moveTo(track[0].x, track[0].y);
+        for (let i = 1; i < track.length; i++) {
+            const prev = track[i - 1];
+            const current = track[i];
+            const next = track[(i + 1) % track.length];
+
+            const cx1 = prev.x + (current.x - prev.x) * (1 - current.curve);
+            const cy1 = prev.y + (current.y - prev.y) * (1 - current.curve);
+            const cx2 = current.x - (next.x - current.x) * current.curve;
+            const cy2 = current.y - (next.y - current.y) * current.curve;
+
+            ctx.bezierCurveTo(cx1, cy1, cx2, cy2, next.x, next.y);
+        }
+        ctx.closePath();
+        const isInside = ctx.isPointInStroke(x, y);
+        ctx.restore();
+        return isInside;
+    }
+
+    function evolve() {
+        cars.forEach(car => {
+            car.fitness += car.checkpoints * 5000;
+        });
+
+        cars.sort((a, b) => b.fitness - a.fitness);
+        const bestCar = cars[0];
+        
+        if (bestCar.fitness > bestFitness) {
+            bestFitness = bestCar.fitness;
+            bestCheckpoints = bestCar.checkpoints;
+            console.log(`New best fitness: ${bestFitness.toFixed(2)}, Checkpoints: ${bestCheckpoints}`);
+            saveBestPerformer();
+        }
+
+        fitnessHistory.push(bestCar.fitness);
+
+        const survivorsCount = Math.max(1, Math.floor(populationSize * survivalRate));
+        const survivors = cars.slice(0, survivorsCount);
+
+        cars = [];
+        for (let i = 0; i < populationSize; i++) {
+            if (i < survivorsCount) {
+                cars.push(new Car(survivors[i].brain.clone()));
+            } else {
+                const parent = survivors[Math.floor(Math.random() * survivors.length)];
+                const child = new Car(parent.brain.clone());
+                child.brain.mutate(mutationRate);
+                cars.push(child);
+            }
+        }
+
+        generation++;
+        generationStartTime = Date.now();
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawTrack();
+        cars.forEach(car => car.draw());
+
+        const timeRemaining = Math.max(0, generationTimeLimit - (Date.now() - generationStartTime));
+
+        infoBox.innerHTML = `
+            <div>Generation: ${generation}</div>
+            <div>Best Fitness: ${bestFitness.toFixed(2)}</div>
+            <div>Best Checkpoints: ${bestCheckpoints}</div>
+            <div>Cars Alive: ${cars.filter(car => !car.crashed).length}</div>
+            <div>Time Remaining: ${(timeRemaining / 1000).toFixed(1)}s</div>
+        `;
+    }
+
+    function update() {
+        cars.forEach(car => car.update());
+
+        if (cars.every(car => car.crashed) || Date.now() - generationStartTime >= generationTimeLimit) {
+            evolve();
+        }
+    }
+
+    // Save best performing car
+    async function saveBestPerformer() {
+        if (bestFitness > 0) {
+            try {
+                const response = await fetch('/api/save-model', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        score: bestFitness,
+                        data: cars[0].brain
+                    })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    console.log('Saved best performer:', result.message);
+                }
+            } catch (err) {
+                console.error('Error saving model:', err);
+            }
+        }
+    }
+
+    // Load initial model
+    async function loadInitialModel() {
+        try {
+            const response = await fetch('/api/current-model');
+            const model = await response.json();
+            if (model.data) {
+                // Create a new brain with the loaded data
+                const loadedBrain = new Brain();
+                Object.assign(loadedBrain, model.data);
+                // Use this brain for the first car
+                cars[0] = new Car(loadedBrain);
+                console.log('Loaded saved model with score:', model.score);
+                bestFitness = model.score;
+            }
+        } catch (err) {
+            console.error('Error loading model:', err);
+        }
+    }
+
+    // Add event listener for beforeunload to save best performer
+    window.addEventListener('beforeunload', () => {
+        saveBestPerformer();
+    });
+
+    
+
+    function updateChart() {}
+
+    function loop() {
+        for (let i = 0; i < 3; i++) {  // Update multiple times per frame for better performance
+            update();
+        }
+        draw();
+        requestAnimationFrame(loop);
+    }
+
+    // Initialize and start the game
+    async function init() {
+        await loadInitialModel();
+        generationStartTime = Date.now();
+        loop();
+    }
+
+    init();
+
+    </script>
+</body>
+</html>
